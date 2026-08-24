@@ -91,9 +91,22 @@ async function collectImages(ctx) {
 // ─── 3 · runAnalyser ───────────────────────────────────────────────────────
 
 async function runAnalyser({ sku, attached, manifest, model }) {
+  // brand / skuName / mrp / internalSkuId / aiNotes are TOP-LEVEL columns on the
+  // SKU row, not members of skuInput. Passing only skuInput meant the analyser
+  // never saw the MRP the user had typed and correctly reported it as missing.
+  const identity = {
+    brandName: sku.brand || '',
+    productName: sku.skuName || '',
+    mrp: sku.mrp === null || sku.mrp === undefined || sku.mrp === '' ? '' : `${sku.currency || 'INR'} ${sku.mrp}`,
+    internalSkuCode: sku.internalSkuId || '',
+    // Legacy free-text the owner wrote for us. Still the best instruction we get.
+    ownerNotes: sku.aiNotes || '',
+  };
+
   const { system, prompt, attachments } = buildAnalyserPrompt({
     category: sku.category,
     productType: sku.productType || sku.subcategory,
+    identity,
     skuInput: sku.skuInput || {},
     imageManifest: manifest.map(({ position, slot }) => ({ position, slot })),
   });
@@ -141,6 +154,13 @@ async function persistAnalysis({ job, sku, analysis, call, manifest }) {
     inputsSnapshot: {
       category: sku.category || null,
       productType: sku.productType || sku.subcategory || null,
+      identity: {
+        brandName: sku.brand || '',
+        productName: sku.skuName || '',
+        mrp: sku.mrp ?? null,
+        currency: sku.currency || 'INR',
+        internalSkuCode: sku.internalSkuId || '',
+      },
       skuInput: sku.skuInput || {},
     },
   };

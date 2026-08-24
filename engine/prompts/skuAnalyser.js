@@ -20,7 +20,7 @@
 // value: it turns our guess into the user's claim.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const PROMPT_VERSION = 'sku-analyser-v1';
+const PROMPT_VERSION = 'sku-analyser-v2';
 
 const SYSTEM = `You are the product analyst for One Click Designer. You read a physical consumer product — its photographs and the facts its owner gave you — and return one structured JSON analysis that a designer, a copywriter and an image model will all work from.
 
@@ -39,7 +39,9 @@ Each image is labelled with the slot the user assigned it. Read them for: the ex
 
 HOW TO FILL EACH FIELD
 - Every leaf value is an object: { "v": <string or array>, "t": "v" | "a" | "m" | "w" | "r" }.
+- BOTH <user_supplied_identity> and <user_supplied_facts> are the owner's own words. Anything present in either is a fact: use it verbatim and tag it "v". Empty strings, empty arrays and "(not set)" mean the owner did not answer — they are NOT facts, and a field you cannot fill from an image either is "m" with the value "—".
 - Prefer the user's supplied value over anything you read or infer. Photograph beats inference. Inference beats blank. Blank beats invention.
+- Where the user's answer and the pack DISAGREE, keep the user's value, tag it "v", and add the conflict to "gaps" so a human resolves it. Never silently pick one.
 - Where you infer a physical measurement from a photograph, say so in the value itself ("approx. 120mm tall, from the photograph") and tag it "a".
 - Colours are hex codes sampled from the pack, most dominant first.
 - Write in Indian English. Currency in ₹ unless the user's price says otherwise.
@@ -83,7 +85,11 @@ Return the JSON object only.`;
  * @param {object} ctx
  * @param {string} ctx.category      e.g. "Beauty & Personal Care"
  * @param {string} ctx.productType   e.g. "Face Serum"
- * @param {object} ctx.skuInput      the wizard's answers (see SKU_INPUT_KEYS)
+ * @param {object} ctx.identity      brand / product name / mrp — these live
+ *                                   TOP-LEVEL on the SKU row, not in skuInput,
+ *                                   and were invisible to the analyser until
+ *                                   they were passed here explicitly.
+ * @param {object} ctx.skuInput      the wizard's four detail boxes
  * @param {Array}  ctx.imageManifest [{ position, slot, s3Key }]
  */
 function buildAnalyserPrompt(ctx) {
@@ -94,6 +100,7 @@ function buildAnalyserPrompt(ctx) {
       category: ctx.category || '(not set)',
       product_type: ctx.productType || '(not set)',
       image_manifest: ctx.imageManifest || [],
+      user_supplied_identity: ctx.identity || {},
       user_supplied_facts: ctx.skuInput || {},
     },
   };
