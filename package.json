@@ -1,0 +1,21 @@
+{
+  "name": "ocd-sku-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OCD SKU analysis engine — polls ocd-sku-jobs-queue, runs the SKU Card analyser, writes AI_analysis onto the ProductSKUs row.",
+  "main": "worker.js",
+  "scripts": {
+    "start": "node worker.js",
+    "check": "node --check worker.js && node --check engine/core/skuRunner.js && node --check engine/core/agentCall.js && node --check engine/core/s3Reader.js && node --check engine/core/skuStore.js && node --check engine/core/jsonParse.js && node --check engine/prompts/skuAnalyser.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/client-sqs": "^3.600.0",
+    "@aws-sdk/lib-dynamodb": "^3.600.0",
+    "axios": "^1.7.2"
+  },
+  "optionalDependencies": {
+    "sharp": "^0.33.4"
+  }
+}
