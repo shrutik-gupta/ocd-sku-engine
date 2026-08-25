@@ -16,6 +16,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const REGION = process.env.AWS_REGION || 'ap-south-1';
 const BUCKET = process.env.SKU_BUCKET || 'video-template-bucket-20241209-cloudshell-user';
@@ -135,4 +136,8 @@ async function putShotImage(key, buffer, contentType = 'image/png') {
   return { s3Key: key, bytes: buffer.length };
 }
 
-module.exports = { readImageForVision, putAnalysisJson, putShotImage, BUCKET };
+async function presignForRead(s3Key, expiresIn = 21600) {
+  return getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: s3Key }), { expiresIn });
+}
+
+module.exports = { readImageForVision, putAnalysisJson, putShotImage, presignForRead, BUCKET };

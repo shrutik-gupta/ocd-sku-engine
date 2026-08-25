@@ -14,11 +14,12 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 
 const REGION = process.env.AWS_REGION || 'ap-south-1';
 const SKUS_TABLE = process.env.PRODUCT_SKUS_TABLE || 'ProductSKUs';
 const JOBS_TABLE = process.env.AI_JOBS_TABLE || 'AIJobs';
+const TEMPLATES_TABLE = process.env.PHASE2_AI_TEMPLATES_TABLE || 'Phase2AITemplates';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }), {
   marshallOptions: { removeUndefinedValues: true },
@@ -143,7 +144,32 @@ async function setShotsStatus(userId, skuId, status, errorMessage) {
   }
 }
 
+// ─── Templates ─────────────────────────────────────────────────────────────
+
+async function getTemplate(templateId) {
+  const out = await ddb.send(new GetCommand({
+    TableName: TEMPLATES_TABLE,
+    Key: { templateId },
+  }));
+  return out.Item || null;
+}
+
 // ─── Jobs ──────────────────────────────────────────────────────────────────
+
+/** Write a child job row for runWorkflow to pick up. */
+async function putJob(item) {
+  await ddb.send(new PutCommand({
+    TableName: JOBS_TABLE,
+    Item: item,
+    ConditionExpression: 'attribute_not_exists(jobId)',
+  }));
+  return item.jobId;
+}
+
+async function getJob(jobId) {
+  const out = await ddb.send(new GetCommand({ TableName: JOBS_TABLE, Key: { jobId } }));
+  return out.Item || null;
+}
 
 async function updateJob(jobId, fields) {
   const names = {};
@@ -183,6 +209,9 @@ async function checkpoint(jobId, status, label, extra = {}) {
 
 module.exports = {
   getSku,
+  getTemplate,
+  putJob,
+  getJob,
   appendAnalysis,
   setAnalysisStatus,
   upsertCardShots,
