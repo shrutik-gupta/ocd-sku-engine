@@ -85,6 +85,64 @@ async function setAnalysisStatus(userId, skuId, status, errorMessage) {
   }
 }
 
+// ─── Card shots ────────────────────────────────────────────────────────────
+async function upsertCardShots(userId, skuId, results) {
+  const cur = await ddb.send(new GetCommand({
+    TableName: SKUS_TABLE,
+    Key: { userId, skuId },
+    ProjectionExpression: 'cardShots',
+  }));
+
+  const existing = Array.isArray(cur.Item?.cardShots) ? cur.Item.cardShots : [];
+  const byIndex = new Map(existing.map((s) => [s.index, s]));
+
+  results.forEach((r) => {
+    // A failed regeneration must not wipe the good shot already sitting there.
+    if (r.status === 'failed' && byIndex.has(r.index)) {
+      const prev = byIndex.get(r.index);
+      if (prev.status === 'complete') {
+        byIndex.set(r.index, { ...prev, lastError: r.error, lastFailedAt: r.createdAt });
+        return;
+      }
+    }
+    byIndex.set(r.index, r);
+  });
+
+  const shots = [...byIndex.values()].sort((a, b) => (a.index ?? 99) - (b.index ?? 99));
+  const now = new Date().toISOString();
+
+  await ddb.send(new UpdateCommand({
+    TableName: SKUS_TABLE,
+    Key: { userId, skuId },
+    UpdateExpression: 'SET cardShots = :s, shotsGeneratedAt = :now, updatedAt = :now',
+    ConditionExpression: 'attribute_exists(skuId)',
+    ExpressionAttributeValues: { ':s': shots, ':now': now },
+  }));
+
+  console.log(`[skuStore] cardShots now holds ${shots.length} entr${shots.length === 1 ? 'y' : 'ies'}`);
+  return shots;
+}
+
+async function setShotsStatus(userId, skuId, status, errorMessage) {
+  const values = { ':status': status, ':now': new Date().toISOString() };
+  const sets = ['shotsStatus = :status', 'updatedAt = :now'];
+  if (errorMessage) {
+    sets.push('shotsError = :err');
+    values[':err'] = String(errorMessage).slice(0, 900);
+  }
+  try {
+    await ddb.send(new UpdateCommand({
+      TableName: SKUS_TABLE,
+      Key: { userId, skuId },
+      UpdateExpression: `SET ${sets.join(', ')}`,
+      ConditionExpression: 'attribute_exists(skuId)',
+      ExpressionAttributeValues: values,
+    }));
+  } catch (err) {
+    console.error('[skuStore] setShotsStatus failed:', err.message);
+  }
+}
+
 // ─── Jobs ──────────────────────────────────────────────────────────────────
 
 async function updateJob(jobId, fields) {
@@ -127,6 +185,8 @@ module.exports = {
   getSku,
   appendAnalysis,
   setAnalysisStatus,
+  upsertCardShots,
+  setShotsStatus,
   updateJob,
   checkpoint,
   SKUS_TABLE,

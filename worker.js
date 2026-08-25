@@ -7,6 +7,7 @@
 
 const { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } = require('@aws-sdk/client-sqs');
 const { runSkuAnalysis } = require('./engine/core/skuRunner');
+const { runSkuShots } = require('./engine/core/shotRunner');
 
 const REGION = process.env.AWS_REGION || 'ap-south-1';
 const QUEUE_URL = process.env.SKU_JOBS_SQS_QUEUE_URL || '';
@@ -41,10 +42,12 @@ async function handleMessage(msg) {
   }
 
   const jobId = payload.jobId || '(no jobId)';
-  console.log(`[sku-engine] ── job ${jobId} · sku ${payload.skuId} · user ${payload.userId}`);
+  const kind = payload.kind || 'analysis';
+  console.log(`[sku-engine] ── job ${jobId} · ${kind} · sku ${payload.skuId} · user ${payload.userId}`);
 
   try {
-    const result = await runSkuAnalysis(payload);
+    const run = kind === 'shots' ? runSkuShots : runSkuAnalysis;
+    const result = await run(payload);
     console.log(`[sku-engine] ✓ job ${jobId} ${result.status} in ${result.durationMs}ms`);
   } catch (err) {
     // runSkuAnalysis marks the job itself; this is the last-resort net.

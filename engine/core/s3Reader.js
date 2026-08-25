@@ -124,4 +124,15 @@ async function putAnalysisJson(key, json) {
   return { s3Key: key, url: `https://${BUCKET}.s3.${REGION}.amazonaws.com/${key}`, bytes: body.length };
 }
 
-module.exports = { readImageForVision, putAnalysisJson, BUCKET };
+async function putShotImage(key, buffer, contentType = 'image/png') {
+  await s3.send(new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  }));
+  console.log(`[s3Reader] stored shot ${key} (${(buffer.length / 1024).toFixed(0)}KB)`);
+  return { s3Key: key, bytes: buffer.length };
+}
+
+module.exports = { readImageForVision, putAnalysisJson, putShotImage, BUCKET };
