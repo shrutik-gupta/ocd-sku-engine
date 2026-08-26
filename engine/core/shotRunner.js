@@ -29,7 +29,7 @@ const { presignForRead } = require('./s3Reader');
 const store = require('./skuStore');
 
 // Fixed for now. Later this becomes per-category, or chosen by the analyser.
-const DEFAULT_TEMPLATES = ['BMH121', 'BMCB105', 'BMTL103'];
+const DEFAULT_TEMPLATES = ['BMCB105', 'BMH121', 'BMTL103'];
 const SHOT_TEMPLATES = (process.env.SKU_SHOT_TEMPLATES || DEFAULT_TEMPLATES.join(','))
   .split(',').map((s) => s.trim()).filter(Boolean);
 
