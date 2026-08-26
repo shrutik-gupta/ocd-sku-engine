@@ -379,8 +379,7 @@ async function executeStep(step, template, marketplaceRecord, context) {
       tileIndex,
       templateRefVideo ? [templateRefVideo.url] : []
     );
-    console.log(`[stepExecutor] ===== ${step.stepId} tile ${tileIndex} FULL PROMPT =====\n${finalPrompt}\n[stepExecutor] ===== end ${step.stepId} tile ${tileIndex} =====`);
-
+    console.log(`[stepExecutor] ${step.stepId} tile ${tileIndex} — prompt ${finalPrompt.length} chars`);
     return {
       prompt: finalPrompt,
       inputs: resolvedInputs,
