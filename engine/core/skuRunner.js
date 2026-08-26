@@ -188,7 +188,15 @@ async function persistAnalysis({ job, sku, analysis, call, manifest }) {
 
 // ─── the run ───────────────────────────────────────────────────────────────
 
-async function runSkuAnalysis(job) {
+/**
+ * @param {object}  job
+ * @param {object} [opts]
+ * @param {boolean}[opts.terminal=true]  when false, the caller owns the job's
+ *        final status. Used by cardRunner, which chains shots onto the same job
+ *        and must not let the analysis mark it complete halfway through.
+ */
+async function runSkuAnalysis(job, opts = {}) {
+  const terminal = opts.terminal !== false;
   const started = Date.now();
   const { jobId, userId, skuId } = job;
 
@@ -213,18 +221,16 @@ async function runSkuAnalysis(job) {
 
     const durationMs = Date.now() - started;
     await store.updateJob(jobId, {
-      status: 'complete',                 // NOT "completed" — the poller convention
-      currentStepLabel: 'Done',
+      ...(terminal ? { status: 'complete', currentStepLabel: 'Done', completedAt: new Date().toISOString() } : {}),
       analysisId: saved.analysisId,
       analysisVersion: saved.version,
       promptVersion: PROMPT_VERSION,
       model: call.model,
-      jobDurationMs: durationMs,
-      completedAt: new Date().toISOString(),
+      analysisDurationMs: durationMs,
       errorMessage: null,
     });
 
-    return { status: 'complete', analysisId: saved.analysisId, durationMs };
+    return { status: 'complete', analysisId: saved.analysisId, analysis, durationMs };
   } catch (err) {
     const durationMs = Date.now() - started;
     const message = err && err.message ? err.message : String(err);

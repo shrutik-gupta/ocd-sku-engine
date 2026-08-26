@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } = require('@aws-sdk/client-sqs');
-const { runSkuAnalysis } = require('./engine/core/skuRunner');
+const { runSkuCard } = require('./engine/core/cardRunner');
 const { runSkuShots } = require('./engine/core/shotRunner');
 
 const REGION = process.env.AWS_REGION || 'ap-south-1';
@@ -42,11 +42,12 @@ async function handleMessage(msg) {
   }
 
   const jobId = payload.jobId || '(no jobId)';
+  // Older messages carry no `kind` — they are all analysis jobs.
   const kind = payload.kind || 'analysis';
   console.log(`[sku-engine] ── job ${jobId} · ${kind} · sku ${payload.skuId} · user ${payload.userId}`);
 
   try {
-    const run = kind === 'shots' ? runSkuShots : runSkuAnalysis;
+    const run = kind === 'shots' ? runSkuShots : runSkuCard;
     const result = await run(payload);
     console.log(`[sku-engine] ✓ job ${jobId} ${result.status} in ${result.durationMs}ms`);
   } catch (err) {

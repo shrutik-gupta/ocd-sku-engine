@@ -172,7 +172,14 @@ async function runOneShot({ job, ctx, inputFiles, index }) {
 
 // ─── The run ───────────────────────────────────────────────────────────────
 
-async function runSkuShots(job) {
+/**
+ * @param {object}  job
+ * @param {object} [opts]
+ * @param {boolean}[opts.terminal=true]  when false the caller owns the job's
+ *        final status (see cardRunner).
+ */
+async function runSkuShots(job, opts = {}) {
+  const terminal = opts.terminal !== false;
   const started = Date.now();
   const { jobId, userId, skuId } = job;
 
@@ -213,34 +220,38 @@ async function runSkuShots(job) {
 
     const ok = results.filter((r) => r.status === 'complete').length;
     const durationMs = Date.now() - started;
-    const terminal = ok === 0 ? 'failed' : 'complete';
+    const terminalStatus = ok === 0 ? 'failed' : 'complete';
     const firstError = (results.find((r) => r.status === 'failed') || {}).error || null;
 
     await store.updateJob(jobId, {
-      status: terminal,
-      currentStepLabel: ok === results.length ? 'Done' : `${ok} of ${results.length} generated`,
+      ...(terminal ? {
+        status: terminalStatus,
+        currentStepLabel: ok === results.length ? 'Done' : `${ok} of ${results.length} generated`,
+        completedAt: new Date().toISOString(),
+      } : {}),
       shotsGenerated: ok,
       shotsRequested: results.length,
-      jobDurationMs: durationMs,
-      completedAt: new Date().toISOString(),
-      errorMessage: ok === 0 ? (firstError || 'Every shot failed') : null,
+      shotsDurationMs: durationMs,
+      ...(terminal && ok === 0 ? { errorMessage: firstError || 'Every shot failed' } : {}),
     });
-    await store.setShotsStatus(userId, skuId, terminal, ok === 0 ? firstError : null);
+    await store.setShotsStatus(userId, skuId, terminalStatus, ok === 0 ? firstError : null);
 
-    console.log(`[shotRunner] job ${jobId} ${terminal} — ${ok}/${results.length} shots in ${durationMs}ms`);
-    return { status: terminal, generated: ok, durationMs };
+    console.log(`[shotRunner] job ${jobId} ${terminalStatus} — ${ok}/${results.length} shots in ${durationMs}ms`);
+    return { status: terminalStatus, generated: ok, requested: results.length, durationMs, error: firstError };
   } catch (err) {
     const durationMs = Date.now() - started;
     const message = err && err.message ? err.message : String(err);
     console.error(`[shotRunner] job ${jobId} failed after ${durationMs}ms:`, message);
 
-    await store.updateJob(jobId, {
-      status: 'failed',
-      currentStepLabel: 'Failed',
-      errorMessage: message.slice(0, 900),
-      jobDurationMs: durationMs,
-      completedAt: new Date().toISOString(),
-    });
+    if (terminal) {
+      await store.updateJob(jobId, {
+        status: 'failed',
+        currentStepLabel: 'Failed',
+        errorMessage: message.slice(0, 900),
+        jobDurationMs: durationMs,
+        completedAt: new Date().toISOString(),
+      });
+    }
     if (userId && skuId) await store.setShotsStatus(userId, skuId, 'failed', message);
 
     return { status: 'failed', durationMs, error: message };
