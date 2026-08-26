@@ -13,11 +13,10 @@
 // Two rules:
 //  · Never invent a value a select doesn't offer — fuzzy-match into the schema's
 //    own options list, and fall back to the template's declared default.
-//  · Fill BOTH casings. The shipped master prompts reference {{userInputs.AspectRatio}}
-//    and {{userInputs.TextInput}} while their schemas declare `aspectRatio` and
-//    `text`. On the user path those resolve to nothing and finalizePrompt strips
-//    them — which is why "Generate the final creative in ." reaches the model
-//    today. Costs nothing to satisfy both here.
+//  · NEVER supply a field the schema doesn't declare. The schema is the template
+//    author's contract; an undeclared field is one the author did not intend
+//    that template to receive, and supplying it changes the creative. Casing
+//    aliases of a DECLARED key are fine — same value, so the output cannot move.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const DEFAULT_ASPECT = process.env.SKU_SHOT_ASPECT || '1:1';
@@ -207,8 +206,11 @@ function mapAnalysisToInputs({ template, analysis, sku }) {
     }
   }
 
-  // Both casings — see the header. The alias only fills a key the schema hasn't
-  // already set, so a real schema field always wins.
+  // Casing aliases, for DECLARED keys only. The shipped master prompts
+  // reference {{userInputs.AspectRatio}} and {{userInputs.TextInput}} while
+  // their schemas declare `aspectRatio` and `text`; aliasing lets those
+  // sentences resolve instead of being stripped. The value is identical, so
+  // this cannot change the creative.
   const alias = {
     aspectRatio: ['AspectRatio'],
     text: ['TextInput'],
@@ -222,22 +224,24 @@ function mapAnalysisToInputs({ template, analysis, sku }) {
     tos.forEach((to) => { if (userInputs[to] === undefined) userInputs[to] = userInputs[from]; });
   }
 
-  // These are referenced by the shipped master prompts but declared by none of
-  // the three schemas — supply them so the sentences that use them survive
-  // finalizePrompt instead of being stripped to nothing.
-  if (userInputs.aspectRatio === undefined) {
-    userInputs.aspectRatio = DEFAULT_ASPECT;
-    userInputs.AspectRatio = DEFAULT_ASPECT;
-  }
-  if (userInputs.language === undefined) userInputs.language = DEFAULT_LANGUAGE;
-  if (userInputs.textureType === undefined) {
-    const t = candidates.texturetype();
-    if (t) userInputs.textureType = t;
-  }
-  if (userInputs.text === undefined) {
-    const t = candidates.text();
-    if (t) { userInputs.text = t; userInputs.TextInput = t; }
-  }
+  // ── Nothing else is added. This is load-bearing. ──
+  //
+  // An earlier version also supplied `text`, `textureType` and `language` when
+  // the master prompt mentioned them but the schema did not declare them. That
+  // looked free — a sentence resolving instead of being stripped — and it was
+  // not.
+  //
+  // BMH121 declares only aspectRatio + imageUpload. Its reference creative is a
+  // clean studio pack shot, and the workbook renders it as one, because
+  // {{userInputs.text}} resolves to nothing there and finalizePrompt removes it.
+  // Injecting 450 characters of benefits and ingredients gave Step 6 ("replace
+  // every text element with new product-specific copy") and Step 12 ("apply user
+  // instructions relating to campaign direction, typography, marketing copy")
+  // real content to act on — and the model built a benefits-panel campaign with
+  // a human model in it. A completely different creative from the same template.
+  //
+  // The schema is the template author's contract. If a field is not declared,
+  // the author did not intend that template to receive it.
 
   return { userInputs, notes };
 }

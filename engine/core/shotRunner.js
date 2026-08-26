@@ -254,7 +254,7 @@ async function runSkuShots(job, opts = {}) {
     }
     if (userId && skuId) await store.setShotsStatus(userId, skuId, 'failed', message);
 
-    return { status: 'failed', durationMs, error: message };
+    return { status: 'failed', generated: 0, requested: 0, durationMs, error: message };
   }
 }
 
