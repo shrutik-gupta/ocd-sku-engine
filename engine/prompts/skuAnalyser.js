@@ -20,7 +20,9 @@
 // value: it turns our guess into the user's claim.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const PROMPT_VERSION = 'sku-analyser-v2';
+const { pickCategoryAnalyser } = require('./categoryRouter');
+
+const PROMPT_VERSION = 'sku-analyser-v2';   // the legacy prompt below only
 
 const SYSTEM = `You are the product analyst for One Click Designer. You read a physical consumer product — its photographs and the facts its owner gave you — and return one structured JSON analysis that a designer, a copywriter and an image model will all work from.
 
@@ -81,8 +83,21 @@ NOTES ON THE HARDER SECTIONS
 
 Return the JSON object only.`;
 
+
+const CATEGORY_USER_TURN = `Analyse the product in the images above and return the JSON object your instructions describe.
+
+About what you received:
+- Each image has a caption with the slot name the user put it in. The slot name is only the user's label. Look at each image and decide for yourself what it is.
+- <user_supplied_identity> and <user_supplied_facts> are typed notes from the brand. Treat them as typed, source "typed". An empty value, an empty list or "(not set)" means the brand did not answer. It is not a fact.
+- <category> and <product_type> are what the user picked in our form. Use them as a hint for the category answer. If the pack says something different, the pack wins.
+
+One extra rule: the words in user_supplied_facts.bannedWords must not appear anywhere in your output, in any form.
+
+Return the JSON object only.`;
+
 /**
  * @param {object} ctx
+ * @param {string} ctx.categoryId    e.g. "beauty" — what the router branches on
  * @param {string} ctx.category      e.g. "Beauty & Personal Care"
  * @param {string} ctx.productType   e.g. "Face Serum"
  * @param {object} ctx.identity      brand / product name / mrp — these live
@@ -91,18 +106,36 @@ Return the JSON object only.`;
  *                                   they were passed here explicitly.
  * @param {object} ctx.skuInput      the wizard's four detail boxes
  * @param {Array}  ctx.imageManifest [{ position, slot, s3Key }]
+ * @returns {{ system, prompt, attachments, promptVersion, schema, analyser }}
  */
 function buildAnalyserPrompt(ctx) {
+  const attachments = {
+    category: ctx.category || '(not set)',
+    product_type: ctx.productType || '(not set)',
+    image_manifest: ctx.imageManifest || [],
+    user_supplied_identity: ctx.identity || {},
+    user_supplied_facts: ctx.skuInput || {},
+  };
+
+  const picked = pickCategoryAnalyser({ categoryId: ctx.categoryId, productType: ctx.productType });
+  if (picked) {
+    return {
+      system: picked.text,
+      prompt: CATEGORY_USER_TURN,
+      attachments,
+      promptVersion: picked.promptVersion,
+      schema: 'cat-v1',
+      analyser: picked.key,
+    };
+  }
+
   return {
     system: SYSTEM,
     prompt: INSTRUCTION,
-    attachments: {
-      category: ctx.category || '(not set)',
-      product_type: ctx.productType || '(not set)',
-      image_manifest: ctx.imageManifest || [],
-      user_supplied_identity: ctx.identity || {},
-      user_supplied_facts: ctx.skuInput || {},
-    },
+    attachments,
+    promptVersion: PROMPT_VERSION,
+    schema: 'v2',
+    analyser: 'legacy',
   };
 }
 

@@ -19,6 +19,8 @@
 //    aliases of a DECLARED key are fine — same value, so the output cannot move.
 // ═══════════════════════════════════════════════════════════════════════════
 
+const { schemaOf, isUsable, tagOf } = require('./analysisShape');
+
 const DEFAULT_ASPECT = process.env.SKU_SHOT_ASPECT || '1:1';
 const DEFAULT_LANGUAGE = process.env.SKU_SHOT_LANGUAGE || 'English';
 
@@ -173,12 +175,139 @@ function buildCandidates(analysis, sku) {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// cat-v1 — the category-prompt shape.
+//
+// Leaves are { v, s, src } under product.<group>.<field>, and v can be a
+// string, a list, an object or a list of objects. Only verified/ai leaves are
+// read. The safety rule that `claims.draft` gave v2 is carried by the TAG
+// here: claims, free-from lines and certifications reach a generator only
+// when they are VERIFIED (read off the pack, or typed by the brand). An `ai`
+// claim is a claim nobody printed, and it never gets printed onto an image.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// One item of a list, or an object value, as plain text.
+function catFlat(x) {
+  if (x === null || x === undefined) return '';
+  if (Array.isArray(x)) return x.map(catFlat).filter(Boolean).join(', ');
+  if (typeof x === 'object') return clean(x.name || x.claim || x.text || x.figure || '');
+  return clean(String(x));
+}
+
+function catLeaf(analysis, path, { verifiedOnly = false } = {}) {
+  const n = at(analysis, path);
+  if (!isUsable(n)) return null;
+  if (verifiedOnly && tagOf(n) !== 'v') return null;
+  return n;
+}
+
+/** A leaf as text. `key` reads one member of an object value (age, gender…). */
+function catText(analysis, path, key, opts) {
+  const leaf = catLeaf(analysis, path, opts);
+  if (!leaf) return '';
+  let v = leaf.v;
+  if (key) v = v && typeof v === 'object' && !Array.isArray(v) ? v[key] : '';
+  return catFlat(v);
+}
+
+/** A list leaf as an array of plain strings. */
+function catList(analysis, path, opts) {
+  const leaf = catLeaf(analysis, path, opts);
+  if (!leaf || !Array.isArray(leaf.v)) return [];
+  return leaf.v.map(catFlat).filter(Boolean);
+}
+
+// First path that yields text wins — the groups differ per category
+// (formula / taste_texture / absorbency / serving / use).
+const firstText = (analysis, paths, key) => {
+  for (const p of paths) {
+    const t = catText(analysis, p, key);
+    if (t) return t;
+  }
+  return '';
+};
+
+// "Women", "for her", "Men" → the words template selects actually offer.
+function normaliseGender(s) {
+  const t = clean(s).toLowerCase();
+  if (!t) return '';
+  if (/unisex|everyone|all genders|\bboth\b|\ball\b/.test(t)) return 'Unisex';
+  const female = /wom[ae]n|female|girls?\b|\bher\b|ladies/.test(t);
+  const male = /\bm[ae]n\b|(^|[^e])male|boys?\b|\bhim\b|gents/.test(t);
+  if (female && male) return 'Unisex';   // "women and men"
+  if (female) return 'Female';
+  if (male) return 'Male';
+  return clean(s);
+}
+
+function buildProductTextCat(analysis, sku) {
+  const parts = [];
+  const P = 'product.';
+
+  const brand = catText(analysis, `${P}identity.brand`) || sku.brand || '';
+  const name = catText(analysis, `${P}identity.product_name`) || sku.skuName || '';
+  const variant = catText(analysis, `${P}identity.variant`);
+  const qty = catText(analysis, `${P}identity.net_quantity`);
+
+  const lname = name.toLowerCase();
+  const showVariant = variant && !lname.includes(variant.toLowerCase());
+  const title = [brand, name, showVariant ? variant : ''].filter(Boolean).join(' ');
+  if (title) parts.push(`${title}${qty ? `, ${qty}` : ''}.`);
+
+  const hero = firstText(analysis, [`${P}benefits.main_benefit`, `${P}benefits.health_positioning`]);
+  if (hero) parts.push(hero.endsWith('.') ? hero : `${hero}.`);
+
+  const benefits = catList(analysis, `${P}benefits.other_benefits`);
+  if (benefits.length) parts.push(`Benefits: ${benefits.slice(0, 4).join('; ')}.`);
+
+  const mains = catList(analysis, `${P}ingredients.key_ingredients`);
+  if (mains.length) parts.push(`Key ingredients: ${mains.slice(0, 4).join(', ')}.`);
+
+  // Verified only — see the block comment above.
+  const claims = catList(analysis, `${P}benefits.printed_claims`, { verifiedOnly: true });
+  if (claims.length) parts.push(`Approved claims: ${claims.slice(0, 6).join('; ')}.`);
+
+  const freeFrom = catList(analysis, `${P}ingredients.leaves_out`, { verifiedOnly: true });
+  if (freeFrom.length) parts.push(`Free from: ${freeFrom.slice(0, 6).join(', ')}.`);
+
+  const certs = [
+    ...catList(analysis, `${P}benefits.certifications`, { verifiedOnly: true }),
+    ...catList(analysis, `${P}identity.certifications`, { verifiedOnly: true }), // food keeps them in identity
+  ];
+  if (certs.length) parts.push(`Certifications: ${[...new Set(certs)].join(', ')}.`);
+
+  const banned = clean(sku.skuInput && sku.skuInput.bannedWords);
+  if (banned) parts.push(`Never use these words: ${banned}.`);
+
+  return parts.join(' ');
+}
+
+function buildCandidatesCat(analysis, sku) {
+  const P = 'product.';
+  const audience = `${P}consumer.age_gender_tier_market`;
+  return {
+    aspectratio: () => DEFAULT_ASPECT,
+    language: () => DEFAULT_LANGUAGE,
+    gender: () => normaliseGender(catText(analysis, audience, 'gender')),
+    ethnicity: () => '',   // no category prompt asks for it — the template default wins
+    agegroup: () => catText(analysis, audience, 'age'),
+    texturetype: () => firstText(analysis, [
+      `${P}formula.texture`, `${P}taste_texture.texture`, `${P}absorbency.texture`,
+    ]) || clean(sku.skuInput && sku.skuInput.format),
+    text: () => buildProductTextCat(analysis, sku),
+    textinput: () => buildProductTextCat(analysis, sku),
+    productdescription: () => buildProductTextCat(analysis, sku),
+  };
+}
+
 /**
  * @returns {{ userInputs: object, notes: string[] }}
  */
 function mapAnalysisToInputs({ template, analysis, sku }) {
   const schema = (template && template.inputSchema) || {};
-  const candidates = buildCandidates(analysis, sku);
+  const candidates = schemaOf(analysis) === 'cat-v1'
+    ? buildCandidatesCat(analysis, sku)
+    : buildCandidates(analysis, sku);
   const userInputs = {};
   const notes = [];
 
@@ -246,4 +375,4 @@ function mapAnalysisToInputs({ template, analysis, sku }) {
   return { userInputs, notes };
 }
 
-module.exports = { mapAnalysisToInputs, pickOption, pickAgeOption, buildProductText };
+module.exports = { mapAnalysisToInputs, pickOption, pickAgeOption, buildProductText, buildProductTextCat };

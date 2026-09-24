@@ -25,6 +25,7 @@
 const { randomUUID } = require('crypto');
 const { runWorkflow } = require('./workflowRunner');
 const { mapAnalysisToInputs } = require('./inputMapper');
+const { applyAnalysisEdits } = require('./analysisShape');
 const { presignForRead } = require('./s3Reader');
 const store = require('./skuStore');
 
@@ -40,27 +41,8 @@ const MAX_PRODUCT_IMAGES = parseInt(process.env.SKU_SHOT_MAX_REFS, 10) || 2;
 // The user's edits are the point of the card being editable — a corrected
 // product name or model gender must reach the template, not just the screen.
 
-function resolveLeaf(root, path) {
-  let node = root;
-  for (const seg of String(path).split('.')) {
-    if (node === null || typeof node !== 'object') return null;
-    node = Array.isArray(node) ? node[parseInt(seg, 10)] : node[seg];
-  }
-  return node && typeof node === 'object' && 't' in node ? node : null;
-}
-
-function applyAnalysisEdits(analysis, edits) {
-  if (!analysis || !edits || typeof edits !== 'object') return analysis;
-  const out = JSON.parse(JSON.stringify(analysis));
-  for (const [path, edit] of Object.entries(edits)) {
-    const leaf = resolveLeaf(out, path);
-    if (!leaf || !edit || typeof edit !== 'object') continue;
-    leaf.v = edit.v;
-    leaf.t = 'v';
-    leaf.edited = true;
-  }
-  return out;
-}
+// resolveLeaf / applyAnalysisEdits now live in analysisShape.js — they must
+// read both the v2 { v, t } and the cat-v1 { v, s, src } leaves.
 
 // ─── Stages ────────────────────────────────────────────────────────────────
 

@@ -18,7 +18,7 @@ const { agentCall } = require('./agentCall');
 const { readImageForVision, putAnalysisJson } = require('./s3Reader');
 const { parseJsonLoose } = require('./jsonParse');
 const store = require('./skuStore');
-const { buildAnalyserPrompt, PROMPT_VERSION } = require('../prompts/skuAnalyser');
+const { buildAnalyserPrompt } = require('../prompts/skuAnalyser');
 
 const MAX_IMAGES = parseInt(process.env.SKU_IMAGE_MAX_COUNT, 10) || 6;
 const INLINE_MAX = parseInt(process.env.SKU_ANALYSIS_INLINE_MAX, 10) || 150000;
@@ -103,13 +103,16 @@ async function runAnalyser({ sku, attached, manifest, model }) {
     ownerNotes: sku.aiNotes || '',
   };
 
-  const { system, prompt, attachments } = buildAnalyserPrompt({
+  const { system, prompt, attachments, promptVersion, schema, analyser } = buildAnalyserPrompt({
+    categoryId: sku.categoryId,
     category: sku.category,
     productType: sku.productType || sku.subcategory,
     identity,
     skuInput: sku.skuInput || {},
     imageManifest: manifest.map(({ position, slot }) => ({ position, slot })),
   });
+
+  console.log(`[skuRunner] analyser: ${analyser} · ${promptVersion} · schema ${schema}`);
 
   const out = await agentCall({
     system,
@@ -128,20 +131,26 @@ async function runAnalyser({ sku, attached, manifest, model }) {
   if (typeof parsed.value !== 'object' || Array.isArray(parsed.value)) {
     throw new Error('Analyser returned JSON, but not an object at the top level');
   }
+  if (schema === 'cat-v1' && (!parsed.value.product || typeof parsed.value.product !== 'object')) {
+    console.error('[skuRunner] cat-v1 output has no "product" object. Top-level keys:', Object.keys(parsed.value));
+    throw new Error('Analyser returned the wrong shape — no "product" object');
+  }
 
-  return { analysis: parsed.value, call: out };
+  return { analysis: parsed.value, call: out, promptVersion, schema, analyser };
 }
 
 // ─── 4 · persist ───────────────────────────────────────────────────────────
 
-async function persistAnalysis({ job, sku, analysis, call, manifest }) {
+async function persistAnalysis({ job, sku, analysis, call, manifest, promptVersion, schema, analyser }) {
   const analysisId = `an_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const serialised = JSON.stringify(analysis);
 
   const entry = {
     analysisId,
     jobId: job.jobId,
-    promptVersion: PROMPT_VERSION,
+    promptVersion,
+    schema,                 // 'v2' | 'cat-v1' — the card renders by this
+    analyser,               // 'legacy' | 'skincare' | 'food' | …
     model: call.model,
     provider: call.provider,
     status: 'complete',
@@ -152,6 +161,7 @@ async function persistAnalysis({ job, sku, analysis, call, manifest }) {
     // Snapshot of what the analysis was built FROM. When the user later edits
     // the SKU, this is how you know the card is stale.
     inputsSnapshot: {
+      categoryId: sku.categoryId || null,
       category: sku.category || null,
       productType: sku.productType || sku.subcategory || null,
       identity: {
@@ -209,7 +219,7 @@ async function runSkuAnalysis(job, opts = {}) {
     await store.updateJob(jobId, { imageManifest: manifest });
 
     await store.checkpoint(jobId, 'stage_analyser', 'Analysing the product');
-    const { analysis, call } = await runAnalyser({
+    const { analysis, call, promptVersion, schema, analyser } = await runAnalyser({
       sku: ctx.sku,
       attached,
       manifest,
@@ -217,14 +227,15 @@ async function runSkuAnalysis(job, opts = {}) {
     });
 
     await store.checkpoint(jobId, 'stage_persist', 'Saving your analysis');
-    const saved = await persistAnalysis({ job, sku: ctx.sku, analysis, call, manifest });
+    const saved = await persistAnalysis({ job, sku: ctx.sku, analysis, call, manifest, promptVersion, schema, analyser });
 
     const durationMs = Date.now() - started;
     await store.updateJob(jobId, {
       ...(terminal ? { status: 'complete', currentStepLabel: 'Done', completedAt: new Date().toISOString() } : {}),
       analysisId: saved.analysisId,
       analysisVersion: saved.version,
-      promptVersion: PROMPT_VERSION,
+      promptVersion,
+      analysisSchema: schema,
       model: call.model,
       analysisDurationMs: durationMs,
       errorMessage: null,
