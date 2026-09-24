@@ -10,10 +10,8 @@
 // That covers apparel, tech, kitchenware and the non-cleaning part of
 // home-living, which have no category prompt yet.
 //
-// ROLLOUT FLAG — SKU_CATEGORY_PROMPTS in ecosystem.config.js:
-//   ''  or unset          → off, every SKU uses v2 (today's behaviour)
-//   'all'                 → every category prompt is live
-//   'skincare,food'       → only these keys are live
+// Category prompts are ON by default. SKU_CATEGORY_PROMPTS in
+// ecosystem.config.js is an off switch only — see enabledKeys().
 // Changing it needs pm2 delete + start (env change).
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -55,8 +53,8 @@ for (const [key, file] of Object.entries(FILES)) {
 
 function enabledKeys() {
   const raw = String(process.env.SKU_CATEGORY_PROMPTS || '').trim().toLowerCase();
-  if (!raw) return new Set();
-  if (raw === 'all') return new Set(Object.keys(FILES));
+  if (!raw || raw === 'all') return new Set(Object.keys(FILES));
+  if (raw === 'off') return new Set();
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 }
 
